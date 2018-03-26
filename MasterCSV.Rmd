@@ -1,0 +1,81 @@
+---
+title: "Project3_Master_CSV"
+author: "Peter Lombardo"
+date: "March 25, 2018"
+output: html_document
+---
+```{r}
+library(tidyr)
+library(dplyr)
+library(plyr)
+library("sqldf")
+library(data.table)
+library(stringr)
+```
+
+```{r}
+#import CSV files
+setwd("C:/Users/Peter/Google Drive/607_Project_Share")
+results_edu_Indeed<- read.csv("results_edu_Indeed.csv", header = TRUE, sep = ",")
+results_SKILL_Indeed<- read.csv("results_SKILL_Indeed.csv", header = TRUE, sep = ",")
+setwd("C:/Users/Peter/Google Drive/607_Project_Share/RW csv")
+Indeed_Counts<- read.csv("Indeed_Counts.csv", header = TRUE, sep = ",")
+Reddit_Counts<- read.csv("Reddit_Counts.csv", header = TRUE, sep = ",")
+ZipRecruiter_Counts<- read.csv("ZipRecruiter_Counts.csv", header = TRUE, sep = ",")
+```
+```{r}
+#normalize column names
+colnames(results_SKILL_Indeed) <-c("Skill", "Percent", "Count")
+colnames(results_edu_Indeed) <-c("Skill", "Percent", "Count")
+results_SKILL_Indeed
+results_edu_Indeed
+Indeed_Counts
+Reddit_Counts
+ZipRecruiter_Counts
+results_Indeed <- join(results_SKILL_Indeed, results_edu_Indeed, type = "full")
+results_Indeed
+```
+```{r}
+#Create Master table
+masterCSV <- merge(Indeed_Counts, Reddit_Counts, all='TRUE')
+masterCSV <- merge(masterCSV, ZipRecruiter_Counts, all='TRUE')
+masterCSV <- merge(masterCSV, results_Indeed, all='TRUE')
+masterCSV$Skill <-as.character(masterCSV$Skill)
+masterCSV$Skill <- tolower(masterCSV$Skill)
+masterCSV
+```
+```{r}
+#clean up percent
+masterCSV <- 
+  masterCSV%>%
+  group_by(Skill)%>%
+  mutate(Percent = round (Percent, digits = 3))
+masterCSV
+```
+```{r}
+#sql code to normalize rows
+masterCSV <- sqldf("SELECT CASE Skill WHEN 'ba' THEN 'bachelors'
+                                      WHEN 'bachelor' THEN 'bachelors' 
+                                      WHEN 'ma' THEN 'masters' 
+                                      WHEN 'master' THEN 'masters'ELSE Skill END, 
+                                      Percent
+                            FROM masterCSV")
+colnames(masterCSV) <-c("Skill", "Percent")
+masterCSV
+
+```
+```{r}
+#combine duplicate rows
+masterCSV.final<- data.table(masterCSV)
+masterCSV.final<- masterCSV.final[, lapply(.SD, mean), by=list(Skill)]
+ masterCSV.final <- 
+  masterCSV.final%>%
+   mutate(Percent = round (Percent, digits = 3))
+ masterCSV.final$Skill <- toupper(masterCSV.final$Skill)
+masterCSV.final
+```
+```{r}
+#export CSV
+setwd("C:/Users/Peter/Google Drive/607_Project_Share")
+write.csv (masterCSV.final, file ="masterCSV_final.csv",row.names = F)
+```

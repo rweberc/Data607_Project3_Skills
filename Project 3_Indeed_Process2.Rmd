@@ -1,0 +1,205 @@
+---
+title: "Project 3"
+author: "Peter Lombardo, Sang Yoon (Andy)"
+date: "March 23, 2018"
+output: html_document
+---
+```{r}
+library(rvest)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(pingr)
+```
+```{r}
+ping <- function(x, stderr = FALSE, stdout = FALSE, ...){
+    pingvec <- system2("ping", x,
+                       stderr = FALSE,
+                       stdout = FALSE,...)
+    if (pingvec == 0) TRUE else FALSE
+}
+```
+```{r}
+# Set URLs
+url_short <- 'https://www.indeed.com'
+url_full_pg1 <- 'https://www.indeed.com/q-Data-Scientist-l-united-states-jobs.html'
+url_full <- ('https://www.indeed.com/jobs?q=Data+Scientist&l=united+states&start=10')
+cat(url_full)
+```
+```{r}
+# get the html file from search url
+main_page <- read_html(url_full_pg1)
+
+# get the total number of job posting from keywords
+total_job_posting <- unlist(strsplit(main_page %>%
+                              html_node("#searchCount") %>%
+                              html_text(), split = ' '))
+
+total_job_posting <- as.numeric(str_replace_all(total_job_posting[length(total_job_posting)-1],',',''))
+
+cat('Total number of job posting: ', total_job_posting)
+
+```
+```{r}
+# Setting up main page web scraping
+links <- main_page %>%
+ html_nodes("h2 a") %>%
+ html_attr('href')
+
+# Set page search sequence
+page_seq <- paste0("https://www.indeed.com/jobs?q=Data+Scientist&l=united+states&start=", seq(10, 60, 10 ))
+  
+  
+
+kw_ln <- c('Hadoop','Python','\\bSQL', 'NoSQL','\\bR\\b', 'Spark', 'SAS', 'Excel\\b', 'Hive', '\\bC\\b', 'Java', 'Tableau')
+kw_edu <- c('(\\bb\\.?a\\.?\\b)|(\\bb\\.?s\\.?\\b)|\1.?\2|\2.?\1|Bachelor', # bachelor
+           '(\\bm\\.?a\\.?\\b)|(\\bm\\.?s\\.?\\b)|\1.?\2|\2.?\1|Master', # master
+           'Ph\\.?D|Doctorate') # doctorate
+```
+```{r}
+# Raw html cleaning; removing commas, tabs and etc  
+clean.text <- function(text)
+{
+ str_replace_all(text, regex('\r\n|\n|\t|\r|,|/|<|>|\\.|[:space:]'), ' ')
+}
+
+# Scrape web page and compute running total
+scrape_web <- function(res, page_seq ){
+ for(i in 1:length(page_seq)){
+   job.url <- paste0(url_short,page_seq [i])
+   
+   Sys.sleep(1)
+   cat(paste0('Reading job ', i, '\n'))
+   
+   tryCatch({
+     html <- read_html(job.url)
+     text <- html_text(html)
+     text <- clean.text(text)
+     df <- data.frame(skill = kw_ln, count = ifelse(str_detect(text, kw_ln), 1, 0))
+     res$running$count <- res$running$count + df$count
+     res$num_jobs <- res$num_jobs + 1
+   }, error=function(e){cat("ERROR :",conditionMessage(e), "\n")})
+ }
+ return(res)
+}
+```
+```{r}
+scrape_web_edu <- function(res, page_seq ){
+ for(i in 1:length(page_seq)){
+   job.url <- paste0(url_short,page_seq [i])
+   
+   Sys.sleep(1)
+   cat(paste0('Reading job ', i, '\n'))
+   
+   tryCatch({
+     html <- read_html(job.url)
+     text <- html_text(html)
+     text <- clean.text(text)
+     df <- data.frame(skill = kw_edu, count = ifelse(str_detect(text, kw_edu), 1, 0))
+     res$running$count <- res$running$count + df$count
+     res$num_jobs <- res$num_jobs + 1
+   }, error=function(e){cat("ERROR :",conditionMessage(e), "\n")})
+ }
+ return(res)
+}
+```
+```{r}
+
+# Remove \\b for ggplot visualization
+kw_ln_ggplot <- c('Hadoop','Python','SQL', 'NoSQL','R', 'Spark', 'SAS', 'Excel', 'Hive', 'C', 'Java', 'Tableau')
+kw_edu_ggplot  <- c('Bachelors','Masters','PhD' )
+
+# Get the running total
+running <- data.frame(skill = kw_ln_ggplot, count = rep(0, length(kw_ln_ggplot)))
+running_edu <- data.frame(Education = kw_edu_ggplot, count = rep(0, length(kw_edu_ggplot)))
+
+# Since the indeed only display max of 20 pages from search result, we cannot use total_job_posting but need to track by creating a num_jobs
+num_jobs <- 0
+```
+```{r}
+# Here is our results object that contains the two stats
+results <- list("running" = running, "num_jobs" = num_jobs)
+
+if(total_job_posting != 0){
+ cat('Scraping jobs in Start Page\n')
+  results <- scrape_web(results, links)
+}
+
+for(p in 1:length(page_seq)){
+ 
+ cat('Moving to Next job set\n')
+ 
+ # Navigate to next page
+ping_res <- ping(paste0(page_seq[p]))
+ new.page <- read_html(paste0(page_seq[p]))
+ 
+ # Get new page job URLs
+ links <- new.page %>%
+   html_nodes("h2 a") %>%
+   html_attr('href')
+ 
+ # Scrap job links
+ results <- scrape_web(results, links)
+}
+```
+```{r}
+results_edu <- list("running" = running_edu, "num_jobs" = num_jobs)
+
+if(total_job_posting != 0){
+  ping(url_full_pg1)
+ cat('Scraping jobs in Start Page\n')
+ results_edu <- scrape_web_edu(results_edu, links)
+}
+
+for(p in 1:length(page_seq)){
+ 
+ cat('Moving to Next job set\n')
+ 
+ # Navigate to next page
+ping_res <- ping(paste0(page_seq[p]))
+ new.page <- read_html(paste0(page_seq[p]))
+ 
+ # Get new page job URLs
+ links <- new.page %>%
+   html_nodes("h2 a") %>%
+   html_attr('href')
+ 
+ # Scrap job links
+ results_edu <- scrape_web_edu(results_edu, links)
+}
+```
+```{r}
+
+# running total
+print(arrange(results$running, -count))
+
+
+
+# running total count as percentage
+results$running$count<-results$running$count/results$num_jobs
+
+
+# Visualization
+p <- ggplot(results$running, aes(reorder(skill,-count), fill = skill, count)) + geom_bar(stat="identity") +
+ labs(x = 'Language', y = 'Frequency (%)', title = paste0('Language (%) for Data Scientist in the United States')) 
+p + scale_y_continuous(labels = scales::percent, breaks = seq(0,1,0.1))
+```
+```{r}
+print(arrange(results_edu$running, -count))
+
+
+
+# running total count as percentage
+results_edu$running$count<-results_edu$running$count/results_edu$num_jobs
+
+# Visualization
+p <- ggplot(results_edu$running, aes(reorder(Education,-count), fill = Education, count)) + geom_bar(stat="identity") +
+ labs(x = 'Education', y = 'Frequency (%)', title = paste0('Education (%) for Data Scientist in the United States')) 
+p + scale_y_continuous(labels = scales::percent, breaks = seq(0,1,0.1))
+```
+```{r}
+#write CSV files
+setwd("C:/Users/Peter/Google Drive/607_Project_Share")
+write.csv (results_edu, file ="results_edu_Indeed.csv",row.names = F)
+write.csv (results, file ="results_SKILL_Indeed.csv",row.names = F)
+```
