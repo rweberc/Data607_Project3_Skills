@@ -1,0 +1,731 @@
+---
+title: "Project 3"
+author: "Peter Lombardo, Sang Yoon (Andy), Vinicio Haro, Ryan Weber, Anjal Hussan, Ashish Kumar"
+date: "March 23, 2018"
+---
+
+# Indeed
+```{r}
+library(rvest)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(tidyverse)
+library(dplyr)
+library(RCurl)
+```
+```{r}
+ping <- function(x, stderr = FALSE, stdout = FALSE, ...){
+    pingvec <- system2("ping", x,
+                       stderr = FALSE,
+                       stdout = FALSE,...)
+    if (pingvec == 0) TRUE else FALSE
+}
+```
+```{r}
+# Search Words
+job_title <- "Data+Scientist"
+location <- "united+states"
+# Set URLs
+url_short <- 'https://www.indeed.com'
+url_full <- paste0('https://www.indeed.com/jobs?q=Data+Scientist&l=united+states&start=10')
+cat(url_full)
+```
+```{r}
+# get the html file from search url
+main_page <- read_html(url_full)
+# get the total number of job posting from keywords
+total_job_posting <- unlist(strsplit(main_page %>%
+                              html_node("#searchCount") %>%
+                              html_text(), split = ' '))
+total_job_posting <- as.numeric(str_replace_all(total_job_posting[length(total_job_posting)-1],',',''))
+cat('Total number of job posting: ', total_job_posting)
+```
+```{r}
+# Setting up main page web scraping
+links <- main_page %>%
+ html_nodes("h2 a") %>%
+ html_attr('href')
+# Set page search sequence
+page_seq <- paste0("https://www.indeed.com/jobs?q=Data+Scientist&l=united+states&start=", seq(10, 60, 10 ))
+  
+  
+kw_ln <- c('Hadoop','Python','\\bSQL', 'NoSQL','\\bR\\b', 'Spark', 'SAS', 'Excel\\b', 'Hive', '\\bC\\b', 'Java', 'Tableau')
+kw_edu <- c('(\\bB[\\.| ]?A\\.?\\b)|(\\bB[\\.| ]?S\\.?\\b)|\1.?\2|\2.?\1|Bachelor',
+            '(\\bM[\\.| ]?A\\.?\\b)|(\\bM[\\.| ]?S\\.?\\b)|\1.?\2|\2.?\1|Master',
+            'Ph[\\.| ]?D|Doctorate' )
+```
+```{r}
+# Raw html cleaning; removing commas, tabs and etc  
+clean.text <- function(text)
+{
+ str_replace_all(text, regex('\r\n|\n|\t|\r|,|/|<|>|\\.|[:space:]'), ' ')
+}
+# Scrape web page and compute running total
+scrape_web <- function(res, page_seq ){
+ for(i in 1:length(page_seq)){
+   job.url <- paste0(url_short,page_seq [i])
+   
+   Sys.sleep(1)
+   cat(paste0('Reading job ', i, '\n'))
+   
+   tryCatch({
+     html <- read_html(job.url)
+     text <- html_text(html)
+     text <- clean.text(text)
+     df <- data.frame(skill = kw_ln, count = ifelse(str_detect(text, kw_ln), 1, 0))
+     res$running$count <- res$running$count + df$count
+     res$num_jobs <- res$num_jobs + 1
+   }, error=function(e){cat("ERROR :",conditionMessage(e), "\n")})
+ }
+ return(res)
+}
+scrape_web_edu <- function(res, page_seq ){
+ for(i in 1:length(page_seq)){
+   job.url <- paste0(url_short,page_seq [i])
+   
+   Sys.sleep(1)
+   cat(paste0('Reading job ', i, '\n'))
+   
+   tryCatch({
+     html <- read_html(job.url)
+     text <- html_text(html)
+     text <- clean.text(text)
+     df <- data.frame(skill = kw_edu, count = ifelse(str_detect(text, kw_edu), 1, 0))
+     res$running$count <- res$running$count + df$count
+     res$num_jobs <- res$num_jobs + 1
+   }, error=function(e){cat("ERROR :",conditionMessage(e), "\n")})
+ }
+ return(res)
+}
+```
+```{r}
+# Remove \\b for ggplot visualization
+kw_ln_ggplot <- c('Hadoop','Python','SQL', 'NoSQL','R', 'Spark', 'SAS', 'Excel', 'Hive', 'C', 'Java', 'Tableau')
+kw_edu_ggplot  <- c('bachelor','Master','PhD' )
+# Get the running total
+running <- data.frame(skill = kw_ln_ggplot, count = rep(0, length(kw_ln_ggplot)))
+running_edu <- data.frame(Education = kw_edu_ggplot, count = rep(0, length(kw_edu_ggplot)))
+# Since the indeed only display max of 20 pages from search result, we cannot use total_job_posting but need to track by creating a num_jobs
+num_jobs <- 0
+```
+```{r, include=FALSE}
+# Here is our results object that contains the two stats
+results <- list("running" = running, "num_jobs" = num_jobs)
+if(total_job_posting != 0){
+ cat('Scraping jobs in Start Page\n')
+ 
+}
+for(p in 1:length(page_seq)){
+ 
+ cat('Moving to Next 50 jobs\n')
+ 
+ # Navigate to next page
+ping_res <- ping(paste0(page_seq[p]))
+ new.page <- read_html(paste0(page_seq[p]))
+ 
+ # Get new page job URLs
+ links <- new.page %>%
+   html_nodes("h2 a") %>%
+   html_attr('href')
+ 
+ # Scrap job links
+ results <- scrape_web(results, links)
+}
+```
+```{r, include=FALSE}
+results_edu <- list("running" = running_edu, "num_jobs" = num_jobs)
+if(total_job_posting != 0){
+ cat('Scraping jobs in Start Page\n')
+}
+for(p in 1:length(page_seq)){
+ 
+ cat('Moving to Next 50 jobs\n')
+ 
+ # Navigate to next page
+ping_res <- ping(paste0(page_seq[p]))
+ new.page <- read_html(paste0(page_seq[p]))
+ 
+ # Get new page job URLs
+ links <- new.page %>%
+   html_nodes("h2 a") %>%
+   html_attr('href')
+ 
+ # Scrap job links
+ results_edu <- scrape_web_edu(results_edu, links)
+}
+```
+```{r}
+# running total
+print(arrange(results$running, -count))
+# running total count as percentage
+results$running$count<-results$running$count/results$num_jobs
+# Reformat the Job Title and Location to readable form
+jt <- str_replace_all(job_title, '\\+|\\\"', ' ')
+loc <- str_replace_all(location, '\\%2C+|\\+',' ')
+# Visualization
+p <- ggplot(results$running, aes(reorder(skill,-count), count)) + geom_bar(stat="identity") +
+ labs(x = 'Language', y = 'Frequency (%)', title = paste0('Language (%) for ', jt, ' in ', loc)) 
+p + scale_y_continuous(labels = scales::percent, breaks = seq(0,1,0.1))
+```
+```{r}
+print(arrange(results_edu$running, -count))
+# running total count as percentage
+results_edu$running$count<-results_edu$running$count/results_edu$num_jobs
+# Reformat the Job Title and Location to readable form
+jt <- str_replace_all(job_title, '\\+|\\\"', ' ')
+loc <- str_replace_all(location, '\\%2C+|\\+',' ')
+# Visualization
+p <- ggplot(results_edu$running, aes(reorder(Education,-count), count)) + geom_bar(stat="identity") +
+ labs(x = 'Education', y = 'Frequency (%)', title = paste0('Education (%) for ', jt, ' in ', loc)) 
+p + scale_y_continuous(labels = scales::percent, breaks = seq(0,1,0.1))
+```
+```{r, include=FALSE}
+#write CSV files
+write.csv (results_edu, file ="/Users/vinicioharo/Desktop/DATA Science SPS/DATA 607/Week 8/results_edu_Indeed.csv",row.names = F)
+write.csv (results, file ="/Users/vinicioharo/Desktop/DATA Science SPS/DATA 607/Week 8/results_SKILL_Indeed.csv",row.names = F)
+```
+Text Analysis and Visualization 
+```{r}
+# Install
+#install.packages("tm")  # for text mining
+#install.packages("SnowballC") # for text stemming
+#install.packages("wordcloud") # word-cloud generator 
+#install.packages("RColorBrewer") # color palettes
+# Load
+library("tm")
+library("SnowballC")
+library("wordcloud")
+library("RColorBrewer")
+```
+connect to mysql 
+```{r, include=FALSE}
+library(RMySQL)
+mydb = dbConnect(MySQL(), user='root', password='data', dbname='project3', host='localhost')
+```
+Get the table that contains the skill and count for each skill
+```{r, include=FALSE}
+rs<-dbGetQuery(mydb, 'select skill, count from indeed_skills;')
+head(rs)
+ws<-dbGetQuery(mydb, 'select education_level as education, count from indeed_edu;')
+head(ws)
+```
+Generate a word cloud 
+```{r}
+set.seed(1234)
+wordcloud(words=rs$skill, freq = rs$count, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"));
+set.seed(1234)
+wordcloud(words=ws$education, freq = ws$count, min.freq = 0,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"));
+```
+```{r}
+barplot(rs$count, las = 2, names.arg = rs$skill,
+        col ="lightblue", main ="Most Frequent Skills",
+        ylab = "Skill Frequencies");
+barplot(ws$count, las = 2, names.arg = ws$education,
+        col ="lightblue", main ="Most Frequent Education Level",
+        ylab = "Education Frequencies")
+```
+
+# Ziprecruiter
+```{r, include=FALSE}
+# Author: Ryan Weber
+# Adapted from example highlighted in class: https://github.com/plb2018/DATA607/blob/master/Project%203/indeed_scraper.rmd
+
+rm(list=ls())
+
+library(rvest)
+library(RCurl)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+# Note: just one location used currently
+location <- c("united+states")
+
+target.job <- "data+scientist"  
+
+base.url <- "https://www.ziprecruiter.com/"
+
+links <- NULL
+
+numPages <- 20
+
+# Function to clean the raw html - removing commas, tabs, line changers, etc  
+clean.text <- function(text) {str_replace_all(text, regex('\r\n|\n|\t|\r|,|/|<|>|\\.|[:space:]'), ' ')} # Note: some are terms are likely redundant
+
+# First get list of links off of pages of interest
+# Only one location used currently
+
+for (loc in location){
+  
+  print(paste0("Getting page links for: ", loc))
+  
+  for (start in 1:numPages){
+    
+    print(paste0("Page: ", start))
+    
+    # Load page
+    url <- paste(base.url,"candidate/search?search=",target.job,"&location=",loc,"&page=", start ,sep="")
+    page <- read_html(url)
+    Sys.sleep(1)
+    
+    # Get the job links on this site
+    links <- c(links,page %>%
+                 html_nodes("div") %>%
+                 html_nodes(xpath = '//*[@class="job_link t_job_link"]') %>%
+                 html_attr("href"))
+  }
+}
+
+# Clean the raw html - removing commas, tabs, line changers, etc  
+clean.text <- function(text)
+{
+  str_replace_all(text, regex('\r\n|\n|\t|\r|,|/|<|>|\\.|[:space:]'), ' ')
+}
+
+#create a structure to hold our summaries
+summary.full <- rep(NA, length(links))
+
+for ( n in 1:length(links) ){
+  
+  print(paste0("Getting job summary for link: ", n))
+  
+  #build the link
+  link <- links[n]
+  
+  
+  tryCatch({
+
+    #pull the link
+    page <- read_html(link)
+    
+    #get the full summary
+    s.full <- page %>%
+      html_nodes("div")  %>%
+      html_nodes(xpath = '//*[@class="jobDescriptionSection"]') %>%
+      html_text() 
+    
+    s.full <- clean.text(s.full)
+    
+    #check to make sure we got some data and if so, append it.
+    if (length(s.full) > 0 ){
+      summary.full[n] = s.full  
+    }
+  }, error=function(e){print(paste0("Failure to load the following: "))})
+  
+}
+
+
+jobs.data <- data.frame(links,summary.full)
+
+jobs.data$summary_lower <- str_to_lower(summary.full)
+
+# Skills
+jobs.data$Hadoop <- as.numeric(str_detect(jobs.data$summary_lower, 'hadoop'))
+jobs.data$Python <- as.numeric(str_detect(jobs.data$summary_lower, 'python'))
+jobs.data$SQL <- as.numeric(str_detect(jobs.data$summary_lower, '\\bsql'))
+jobs.data$NoSQL <- as.numeric(str_detect(jobs.data$summary_lower, 'nosql'))
+jobs.data$R <- as.numeric(str_detect(jobs.data$summary_lower, '\\br\\b'))
+jobs.data$Spark <- as.numeric(str_detect(jobs.data$summary_lower, 'spark'))
+jobs.data$SAS <- as.numeric(str_detect(jobs.data$summary_lower, '\\bsas\\b'))
+jobs.data$Excel <- as.numeric(str_detect(jobs.data$summary_lower, 'excel\\b'))
+jobs.data$Hive <- as.numeric(str_detect(jobs.data$summary_lower, 'hive'))
+jobs.data$C <- as.numeric(str_detect(jobs.data$summary_lower, '\\bc\\b'))
+jobs.data$Java <- as.numeric(str_detect(jobs.data$summary_lower, 'java'))
+jobs.data$Tableau <- as.numeric(str_detect(jobs.data$summary_lower, 'tableau'))
+
+# Education
+jobs.data$BA <- as.numeric(str_detect(jobs.data$summary_lower, '(\\bb[\\.| ]?a\\.?\\b)|(\\bb[\\.| ]?s\\.?\\b)|\1.?\2|\2.?\1|bachelor'))
+jobs.data$MA <- as.numeric(str_detect(jobs.data$summary_lower, '(\\bm[\\.| ]?a\\.?\\b)|(\\bm[\\.| ]?s\\.?\\b)|\1.?\2|\2.?\1|master'))
+jobs.data$PHD <- as.numeric(str_detect(jobs.data$summary_lower, 'ph[\\.| ]?d|doctorate'))
+
+counts <- jobs.data %>%
+  summarize_at(4:length(jobs.data), sum, na.rm = TRUE) %>%
+  gather("Skill", "Count", 1:length(.)) %>%
+  mutate(Percent = round(Count/length(jobs.data$summary_lower[!is.na(jobs.data$summary_lower)]), 2))
+
+# Visualization
+ggplot(counts, aes(reorder(Skill,-Percent), Percent)) + geom_bar(stat="identity") +
+  labs(x = 'Language', y = 'Frequency (%)', title = paste0('Language (%) for Data Scientist in the United States')) %>%
+  scale_y_continuous(labels = scales::percent, breaks = seq(0,1,0.1))
+
+write.csv(jobs.data, "/Users/vinicioharo/Desktop/DATA Science SPS/DATA 607/ZipRecruiter_FullDf.csv")
+write.csv(counts, "/Users/vinicioharo/Desktop/DATA Science SPS/DATA 607/ZipRecruiter_Counts.csv")
+write.table(paste(jobs.data$summary_lower, collapse=" "), file = "/Users/vinicioharo/Desktop/DATA Science SPS/DATA 607/ZipRecruiter_Corpus.txt", 
+            append = FALSE, quote = FALSE, sep = " ",
+            eol = " ", na = " ", row.names = FALSE,
+            col.names = FALSE, qmethod = c("escape", "double"),
+            fileEncoding = "")
+
+zipFullDf <- jobs.data
+zipCounts <- counts
+zipCorpus <- paste(jobs.data$summary_lower, collapse=" ")
+
+
+```
+
+```{r, include=FALSE}
+library(RMySQL)
+mydb = dbConnect(MySQL(), user='root', password='data', dbname='project3', host='localhost')
+```
+
+```{r}
+qs<-dbGetQuery(mydb, 'select skill, count, percent from zip_skills;')
+head(qs)
+ps<-dbGetQuery(mydb, 'select education_level as education, count, percent from zip_edu;')
+head(ps)
+```
+
+
+Additional Visualization for Zip jobs
+```{r}
+set.seed(1234)
+
+wordcloud(words=qs$skill, freq = qs$count, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"));
+
+set.seed(1234)
+wordcloud(words=ps$education, freq = ps$count, min.freq = 0,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+```{r}
+# Visualization
+ggplot(qs, aes(reorder(skill,-percent), percent)) + geom_bar(stat="identity") +
+  labs(x = 'Language', y = 'Frequency (%)', title = paste0('Language (%) for Data Scientist in the United States')) %>%
+  scale_y_continuous(labels = scales::percent, breaks = seq(0,1,0.1))
+
+ggplot(ps, aes(reorder(education,-percent), percent)) + geom_bar(stat="identity") +
+  labs(x = 'Language', y = 'Frequency (%)', title = paste0('Education (%) for Data Scientist in the United States')) %>%
+  scale_y_continuous(labels = scales::percent, breaks = seq(0,1,0.1))
+```
+
+# Reddit
+```{r, include=FALSE}
+# Author: Ryan Weber
+# Adapted from example highlighted in class: https://github.com/plb2018/DATA607/blob/master/Project%203/indeed_scraper.rmd
+
+rm(list=ls())
+
+library(rvest)
+library(RCurl)
+library(stringr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+
+current.link <-"https://www.reddit.com/r/datascience/search?q=data+science+skills&restrict_sr=on&sort=relevance&t=all"
+
+link.list <- c(current.link)
+
+numPages <- 5
+
+# Clean the raw html - removing commas, tabs, line changers, etc  
+clean.text <- function(text) {str_replace_all(text, regex('\r\n|\n|\t|\r|,|/|<|>|\\.|[:space:]'), ' ')} # Note: some are terms are likely redundant
+
+finalDf <- data.frame(post.title = NA, post.score = NA, post.link = NA, responses = NA, stringsAsFactors = FALSE)
+
+for ( n in 1:numPages){
+  
+  print(paste0("Reading page: ", n))
+  
+  # Read in page
+  page <- read_html(current.link)
+  Sys.sleep(1)
+  
+  # Get all links on the page... 
+  #get the job title
+  post.title <- page %>% 
+    html_nodes("div") %>%
+    html_nodes(xpath = '//*[@class="search-result-header"]') %>%
+    html_text()
+  
+  # Get post score
+  post.score <- page %>% 
+    html_nodes("div")  %>% 
+    html_nodes(xpath = '//*[@class="search-score"]')  %>% 
+    html_text() 
+  
+  post.link <- page %>%
+    html_nodes("div") %>%
+    html_nodes(xpath = '//*[@class="search-result-header"]') %>% # Someone here can maybe use x-path + html_attr("href") to get the link... I think there a span in the way
+    html_nodes(xpath = 'a') %>%
+    html_attr("href")
+  
+  # Bind the vectors into data frames from each page
+  # Note... if note all same length, might get dirty data
+  if (length(post.title) == length(post.score) & length(post.title) == length(post.link))
+  {
+    pageDf <- data.frame(post.title, post.score, post.link, responses = NA, stringsAsFactors = FALSE)
+    
+    # with the links, which could then be called in the next section
+    for (i in 1:nrow(pageDf))
+    {
+      print(paste0("Reading post: ", i))
+      
+      post.page <- read_html(pageDf$post.link[i])
+      
+      responses <- post.page %>%
+        html_nodes("div") %>%
+        html_nodes(xpath = '//*[@class="usertext-body may-blank-within md-container "]') %>%
+        html_nodes(xpath = '//*[@class="md"]') %>%
+        html_text()
+  
+      responses <- clean.text(responses) 
+      
+      # scores <- post.page %>%
+      #   html_nodes("div") %>%
+      #   html_nodes(xpath = '//*[@class="dislikes]') %>%
+      #   html_text()
+      
+      # Could get individual post scores here, but for convenience, just making these one block
+      # remove first because it is the original post with other text
+      pageDf$responses[i] <- paste(responses[2:length(responses)], collapse=" ")
+      
+    }
+  }
+  
+  finalDf <- bind_rows(finalDf, pageDf)
+  
+  # Get link to next page (notice reddit can't just use page or item count due to how url is updated between pages)
+  links <- page %>% 
+    html_nodes("div") %>%
+    html_nodes(xpath = '//a[@rel = "nofollow next"]') %>%
+    #html_nodes(xpath = '//*[@class="nextprev"]') %>%
+    html_attr("href")
+  
+  # Get link for next page
+  current.link <- links[1]
+  
+}
+
+# Here, just getting the corpus
+finalDf$responses <- str_to_lower(finalDf$responses)
+
+# Skills
+finalDf$Hadoop <- as.numeric(str_detect(finalDf$responses, 'hadoop'))
+finalDf$Python <- as.numeric(str_detect(finalDf$responses, 'python'))
+finalDf$SQL <- as.numeric(str_detect(finalDf$responses, '\\bsql'))
+finalDf$NoSQL <- as.numeric(str_detect(finalDf$responses, 'nosql'))
+finalDf$R <- as.numeric(str_detect(finalDf$responses, '\\br\\b'))
+finalDf$Spark <- as.numeric(str_detect(finalDf$responses, 'spark'))
+finalDf$SAS <- as.numeric(str_detect(finalDf$responses, '\\bsas\\b'))
+finalDf$Excel <- as.numeric(str_detect(finalDf$responses, 'excel\\b'))
+finalDf$Hive <- as.numeric(str_detect(finalDf$responses, 'hive'))
+finalDf$C <- as.numeric(str_detect(finalDf$responses, '\\bc\\b'))
+finalDf$Java <- as.numeric(str_detect(finalDf$responses, 'java'))
+finalDf$Tableau <- as.numeric(str_detect(finalDf$responses, 'tableau'))
+
+# Education
+finalDf$BA <- as.numeric(str_detect(finalDf$responses, '(\\bb[\\.| ]?a\\.?\\b)|(\\bb[\\.| ]?s\\.?\\b)|\1.?\2|\2.?\1|bachelor'))
+finalDf$MA <- as.numeric(str_detect(finalDf$responses, '(\\bm[\\.| ]?a\\.?\\b)|(\\bm[\\.| ]?s\\.?\\b)|\1.?\2|\2.?\1|master'))
+finalDf$PHD <- as.numeric(str_detect(finalDf$responses, 'ph[\\.| ]?d|doctorate'))
+
+counts <- finalDf %>%
+  summarize_at(5:length(finalDf), sum, na.rm = TRUE) %>%
+  gather("Skill", "Count", 1:length(.)) %>%
+  mutate(Percent = round(Count/length(finalDf$responses[!is.na(finalDf$responses)]), 2))
+
+# Visualization
+ggplot(counts, aes(reorder(Skill,-Percent), Percent)) + geom_bar(stat="identity") +
+  labs(x = 'Language', y = 'Frequency (%)', title = paste0('Language (%) for Data Scientist in the United States')) %>%
+  scale_y_continuous(labels = scales::percent, breaks = seq(0,1,0.1))
+
+write.csv(finalDf, "/Users/vinicioharo/Desktop/DATA Science SPS/DATA 607/Reddit_FullDf.csv")
+write.csv(counts, "/Users/vinicioharo/Desktop/DATA Science SPS/DATA 607/Reddit_Counts.csv")
+write.table(paste(finalDf$responses, collapse=" "), file = "/Users/vinicioharo/Desktop/DATA Science SPS/DATA 607/Reddit_Corpus.txt", 
+            append = FALSE, quote = FALSE, sep = " ",
+            eol = " ", na = " ", row.names = FALSE,
+            col.names = FALSE, qmethod = c("escape", "double"),
+            fileEncoding = "")
+
+redditFullDf <- finalDf
+redditCounts <- counts
+redditCorpus <- paste(finalDf$responses, collapse=" ")
+
+```
+
+Get reddit results from database
+```{r, include=FALSE}
+library(RMySQL)
+mydb = dbConnect(MySQL(), user='root', password='data', dbname='project3', host='localhost')
+```
+
+```{r}
+hs<-dbGetQuery(mydb, 'select skill, count, percent from reddit_skills;')
+head(hs)
+gs<-dbGetQuery(mydb, 'select education_level as education, count, percent from reddit_edu;')
+head(gs)
+```
+
+
+
+Additional Visualization for Reddit posts
+```{r}
+set.seed(1234)
+wordcloud(words=gs$education, freq = gs$count, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"));
+set.seed(1234)
+
+wordcloud(words=hs$skill, freq = hs$count, min.freq = 0,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
+```{r}
+# Visualization
+ggplot(hs, aes(reorder(skill,-percent), percent)) + geom_bar(stat="identity") +
+  labs(x = 'Language', y = 'Frequency (%)', title = paste0('Language (%) for Data Scientist in the United States')) %>%
+  scale_y_continuous(labels = scales::percent, breaks = seq(0,1,0.1))
+
+ggplot(gs, aes(reorder(education,-percent), percent)) + geom_bar(stat="identity") +
+  labs(x = 'Language', y = 'Frequency (%)', title = paste0('Education (%) for Data Scientist in the United States')) %>%
+  scale_y_continuous(labels = scales::percent, breaks = seq(0,1,0.1))
+```
+
+
+We examined the education and skill requirements from indeed.com, ziprecruiter.com, and reddit.com. We illustrate the top skills required through the use of word clouds built from the number of times a skill appears in different job postings. We also examine the skill and education by percentage of job postings. We also collected full job descriptions and compiled them into text documents. 
+
+We can analyze these three documents and perform tf-idf to determine if additional inishgts regarding the most in demand data skills can be obtained. 
+```{r}
+library(tm)
+library(dplyr)
+library(readtext)
+library(readr)
+library(SnowballC)
+library(wordcloud)
+```
+
+Read in the corpus stored in the github repo from a location local on my machine
+```{r}
+indeed_corp <- read_file("/Users/vinicioharo/Desktop/DATA Science SPS/DATA 607/Week 8/corpus/Indeed_Corpus.txt")
+zip_corp <- read_file("/Users/vinicioharo/Desktop/DATA Science SPS/DATA 607/Week 8/corpus/ZipRecruiter_Corpus.txt")
+reddit_corp <- read_file("/Users/vinicioharo/Desktop/DATA Science SPS/DATA 607/Week 8/corpus/Reddit_Corpus.txt")
+documents<-c(indeed_corp, zip_corp, reddit_corp)
+documents2<-c(indeed_corp, zip_corp, reddit_corp) #for testing 
+```
+
+We transform documents into an official corpus 
+```{r}
+job_corpus = Corpus(VectorSource(documents))
+```
+
+Process the text by removing stop words, making everything lower case, and remove punctuation 
+```{r}
+control_list <- list(removePunctuation = TRUE, stopwords = TRUE, tolower = TRUE)
+tdm <- TermDocumentMatrix(job_corpus, control = control_list)
+tdm
+```
+
+We can reduce the dimension of the matrix to make computation faster (if possible)
+```{r}
+tdm2 = removeSparseTerms(tdm, 0.99)
+tdm2
+```
+
+inspect the matrix  
+Lets pick a random row and check the frequency associated with that term in each document 
+```{r}
+inspect(tdm2[800,1:3])
+```
+
+Lets see the top 1000 frequencies in our corpus 
+```{r}
+findFreqTerms(tdm2, 1000)
+```
+
+lets see if we can re-think our approach to building a document frequency matrix 
+```{r}
+txt_corpus <- Corpus (VectorSource (documents2))  # create a corpus
+tm_map (txt_corpus, removePunctuation) # remove punctuations
+
+tm_map (txt_corpus, removeNumbers) # to remove numbers
+
+tm_map (txt_corpus, removeWords, stopwords('english')) # to remove stop words(like ‘as’ ‘the’ etc….)
+Matrix <- TermDocumentMatrix(txt_corpus) # terms in rows
+
+DTM <- DocumentTermMatrix(txt_corpus) # document no's in rows
+```
+
+Words with frequency >300
+```{r}
+findFreqTerms (Matrix, lowfreq=300)  # include words with freq>300
+```
+
+Some of these terms are not as insightful such as big, will, or work. This is a good opportunity to use tf-idf to find more important words that tell a better story. Lets see what else we can learn.
+Word associations~ This calculates the correlation of a word with every other word in the term document matrix. We define a threshold of 0.3 as a min correlation.
+```{r}
+findAssocs (Matrix,'word', 0.8)  # try 'n' as 0.8 to start with
+```
+
+Lets examine an inclusive word cloud 
+```{r}
+txt_corpus <- Corpus (VectorSource (documents2))  # create a corpus
+tm_map (txt_corpus, removePunctuation) # remove punctuations
+
+tm_map (txt_corpus, removeNumbers) # to remove numbers
+
+tm_map (txt_corpus, removeWords, stopwords('english')) # to remove stop words(like ‘as’ ‘the’ etc….)
+Matrix <- TermDocumentMatrix(txt_corpus) # terms in rows
+
+matrix_c <- as.matrix (Matrix)
+
+freq <- sort (rowSums (matrix_c))  # frequency data
+
+tmdata <- data.frame (words=names(freq), freq)
+```
+
+
+The word cloud did not filter for certain stop words, but we can see there are some skills that are consistent with the world clouds we generated for each individual job search site. 
+
+```{r}
+wordcloud (tmdata$words, tmdata$freq, random.order=FALSE, max.words=400, colors=brewer.pal(8, "Dark2"))
+```
+
+Lets see if we can improve the quality of the word cloud with tf_idf
+```{r}
+dtm_tfidf <- DocumentTermMatrix(job_corpus, control = list(weighting = weightTfIdf))
+dtm_tfidf = removeSparseTerms(dtm_tfidf, 0.95)
+dtm_tfidf
+```
+
+Inspect the first document 
+Lets pick rows 600-700
+```{r}
+inspect(dtm_tfidf[1,600:700])
+```
+
+Lets see if our tf-idf word cloud tells a better story?
+We will only look the top 8 because any more will not fit. 
+```{r}
+freq2 = data.frame(sort(colSums(as.matrix(dtm_tfidf)), decreasing=TRUE))
+wordcloud(rownames(freq2), freq2[,1], max.words=8, colors=brewer.pal(1, "Dark2"))
+```
+
+The tf-idf word cloud did not yield better results. I can only speculate that this is due to the inverse relationship involved with tf-idf. The corpus mentions key words such as data, r, hadoop multiple times in each document in the corpus. The tf-idf assigns a high weight to word that rare in the corpus. The higher the tf-idf, the lower the frequency. This would explain why words included in our list of skills are not mentioned in this word cloud. They are commonly used within the corpus. 
+
+
+# Discussion
+Discussion/Limitations:
+
+ - Timing: evening in subsequent searches on the same sites, we would see varying results.  This gives some indication that there may be a temporal factor in the data (time of day or even season) where some words will show up more frequently.
+
+ - Variation among sites: There was significant variation in the results from the analysis of each of the sites.  For instance, Reddit results might show a high score for PhD whereas ZipRecruiter may not.  We have not established the source of this variation.
+
+ - Though job listings are a good starting point for thinking about what employers are looking for in candidates, it's not necessarily true that a job description accurately articulates what are the "most important" skills for a data scientist.  This could take at least two forms.  For instance, a job listing may specify bare minimum requirements (say, BA/BS), when in fact less commonly listed requirements (perhaps, PhD) are actually most important.  Also, job listings are short descriptions that focus on skills that can be described in brief (and often administrative) language.  As many job-searchers might feel, the most important jobs skill might outlined a job posting itself.
+
+ - Our job listing search gives each job listing the same weight.  Perhaps we should weight listings from top companies differently than others.  That is, perhaps Google/Amazon/Facebook/etc. may have a better specifications for the "most important" data science skills in their postings.
+
+ - A search like ours could be more powerful, possibly, if there was a way to rate outcomes in association with the skills (such as which companies listings were associated with the greatest productivity/success, or something along these lines).  Or, to weight the scraped results in some other manner.  For instance, we looked at results from reddit posts, but did not rank according to individual upvote scores.  Perhaps the most upvoted comments could be given more weight in the analysis that ones with lower scores or more downvotes.
+
+ - In searching for single words "SQL experience is not necessary" will have same impact as "SQL experience is necessary".  Would need more robust natural language processing to disambiguating such cases.
+
+ - Finally, in one of our analyses, we evaluated the distribution of commonly understood skills or educational requirements that we understand as important for data scientists.  A further project might use data scraping to inform this initial list to allow for more robust results.
+
